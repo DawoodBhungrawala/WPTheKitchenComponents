@@ -1,0 +1,66 @@
+//Font
+@import url('https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');
+// Body
+$body-bg: #fff;
+$body-color: #212529;
+$enable-negative-margins: true;
+// Typography
+$font-size-base: 1rem;
+$line-height-base: 1.5;
+$font-family-sans-serif: "Poppins", sans-serif;
+//Define color variables
+$primary: #f40404;
+$secondary: #333333;
+$gray: #F7F7F7;
+$grey: #808080;
+$grey-light: #0000001a;
+$custom-colors: (
+		"gray": $gray,
+		"grey": $grey,
+		"grey-light": $grey-light,
+);
+$utilities: (
+		"position": (
+				property: position,
+				responsive: true,
+				values: static relative absolute fixed sticky
+		),
+);
+$utilities: (
+		"text-transform": (
+				property: text-transform,
+				class: text,
+				values: lowercase uppercase capitalize,
+				responsive: true,
+		),
+);
+$utilities: (
+		"position": (
+				property: position,
+				responsive: true,
+				values: static relative absolute fixed sticky
+		),
+);
+$utilities: (
+		"text-transform": (
+				property: text-transform,
+				class: text,
+				values: lowercase uppercase capitalize,
+				responsive: true,
+		),
+);
+//$spacer: 1rem;
+//$spacers: (
+//        0: 0,
+//        1: $spacer * .25,
+//        2: $spacer * .5,
+//        3: $spacer,
+//        4: $spacer * 1.5,
+//        5: $spacer * 3,
+//        6: $spacer * 4,
+//        7: $spacer * 5,
+//        8: $spacer * 6,
+//        9: $spacer * 7,
+//        10: $spacer * 8,
+//);
+

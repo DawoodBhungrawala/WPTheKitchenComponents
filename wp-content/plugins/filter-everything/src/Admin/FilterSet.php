@@ -1,0 +1,1557 @@
+<?php
+
+
+namespace FilterEverything\Filter;
+
+if ( ! defined('ABSPATH') ) {
+    exit;
+}
+
+class FilterSet
+{
+    const NONCE_ACTION          = 'wpc-f-set-nonce';
+
+    const FIELD_NAME_PREFIX     = 'wpc_set_fields';
+
+    const FREE_LIMIT_NEW         = 2;
+
+    const FREE_LIMIT_LEGACY      = 3;
+
+    const FREE_LIMIT_CUTOFF_DATE = '2026-06-15 00:00:00';
+
+    private $defaultFields      = [];
+
+    private $hooksRegistered    = false;
+
+    private $errors;
+
+    private $changingTrashSlug = false;
+
+    public function __construct()
+    {
+        $this->registerHooks();
+    }
+
+    private function setupDefaultFields()
+    {
+        // maybe add filter in future to allow change default fields
+        $defaultFields = array(
+            'post_type' => array(
+                'type'          => 'Select',
+                'label'         => esc_html__('Post Type to filter', 'filter-everything'),
+                'name'          => $this->generateFieldName('post_type'),
+                'id'            => $this->generateFieldId('post_type'),
+                'class'         => 'wpc-field-post-type',
+                'options'       => $this->getPostTypes(),
+                'default'       => 'post',
+                'instructions'  => esc_html__('Select the Post Type you need to filter', 'filter-everything'),
+                'particular'    => 'post_excerpt' // Determine that this is specific field should be stored in wp_post column
+            ),
+            'hide_empty' => array(
+                'type'          => 'Select',
+                'label'         => esc_html__('Empty Terms', 'filter-everything'),
+                'name'          => $this->generateFieldName('hide_empty'),
+                'id'            => $this->generateFieldId('hide_empty'),
+                'class'         => 'wpc-field-hide-empty',
+                'options'       => array(
+                    'no' => esc_html__('Never hide', 'filter-everything'),
+                    'yes' => esc_html__('Always hide', 'filter-everything'),
+                    'initial' => esc_html__('Hide in the initial Filter only', 'filter-everything')
+                ),
+                'default'       => 'no',
+                'instructions'  => esc_html__('To hide or not Filter terms that do not contain posts', 'filter-everything'),
+                'settings'      => true
+            ),
+            'show_count' => array(
+                'type'          => 'Checkbox',
+                'label'         => esc_html__('Show counters', 'filter-everything'),
+                'name'          => $this->generateFieldName('show_count'),
+                'id'            => $this->generateFieldId('show_count'),
+                'class'         => 'wpc-field-show-count',
+                'default'       => 'yes',
+                'instructions'  => esc_html__('Displays the number of posts in a term', 'filter-everything'),
+                'settings'      => true
+            ),
+            'wp_page_type' => array(
+                'type'          => 'Select',
+                'label'         => esc_html__('Where to filter?', 'filter-everything'),
+                'class'         => 'wpc-field-wp-page-type',
+                'id'            => $this->generateFieldId('wp_page_type'),
+                'name'          => $this->generateFieldName('wp_page_type'),
+                'options'       => flrt_get_set_location_groups(),
+                'default'       => 'common___common',
+                'instructions'  => esc_html__('Specify page(s) where the Posts list should be filtered is located', 'filter-everything'),
+                'settings'      => true,
+                'location'      => true,
+            ),
+            'post_name' => array(
+                'type'          => 'Select',
+                'label'         => '',
+                'class'         => 'wpc-field-location',
+                'id'            => $this->generateFieldId('post_name'),
+                'name'          => $this->generateFieldName('post_name'),
+                'options'       => flrt_get_set_location_terms(),
+                'default'       => '1',
+                'instructions'  => '',
+                'particular'    => 'post_name', // Determine that this is specific field should be stored in wp_post column
+                'settings'      => true,
+                'location'      => true,
+            ),
+
+            'wp_filter_query' => array(
+                'type'          => 'Select',
+                'label'         => esc_html__('What to filter?', 'filter-everything'),
+                'class'         => 'wpc-field-wp-filter-query',
+                'id'            => $this->generateFieldId('wp_filter_query'),
+                'name'          => $this->generateFieldName('wp_filter_query'),
+                'options'       => array( '-1' => esc_html__('— Select Query —', 'filter-everything') ),
+                'default'       => '-1',
+                'instructions'  => esc_html__('Determines what exactly the Posts list (WP_Query) on a page should be filtered', 'filter-everything'),
+                'tooltip'       => wp_kses ( __( 'Every Posts list, like "Popular products" or "Recent posts" on a page, is related to some WP_Query. This field allows you to set desired Posts list by choosing its WP_Query.<br /><br />If the filtering process does not change the Posts you need, it means you selected the wrong WP_Query. Please, try to experiment with different ones until it starts to filter.', 'filter-everything' )
+                    ,
+                    array(
+                        'br' => array()
+                    )
+                ),
+                'settings'      => true,
+                'location'      => true,
+            ),
+
+        );
+
+        $this->defaultFields = apply_filters( 'wpc_filter_set_default_fields', $defaultFields, $this );
+    }
+
+    private function registerHooks()
+    {
+        if ( ! $this->hooksRegistered ) {
+            add_filter( 'wpc_input_type_select', [ $this, 'addCustomLabel' ], 10, 2 );
+            add_action( 'admin_print_scripts', [ $this, 'includeAdminJs' ], 9999 );
+
+            add_filter( 'post_updated_messages', [ $this, 'filterSetActionsMessages' ] );
+            add_filter( 'bulk_post_updated_messages', [ $this, 'filterSetBulkActionsMessages' ], 10, 2 );
+
+            add_filter( 'page_row_actions', [ $this, 'filterSetRowActions' ], 10, 2 );
+
+            add_filter( 'page_row_actions', [ $this, 'addDuplicateLink' ], 11, 2 );
+
+
+            add_action( 'restrict_manage_posts', [ $this, 'restrictManagePosts' ], 999 );
+
+            add_action('manage_posts_extra_tablenav', [ $this, 'display_auto_filter_set_create_links'], 21, 1);
+
+            add_action('admin_post_wpc_create_auto_filter_set', [ $this, 'handle_create_auto_filter_set']);
+
+            add_action('admin_notices', array($this, 'adminErrorNotice'));
+
+            add_action('trashed_post', array($this, 'removePermalinksFromSettings'));
+
+            add_action('before_delete_post', array($this, 'removePermalinksFromSettings'));
+            add_action('transition_post_status', array($this, 'changeTrashSlug'), 10, 3);
+
+            $this->hooksRegistered = true;
+        }
+    }
+
+    public function restrictManagePosts( $post_type )
+    {
+        if( $post_type === FLRT_FILTERS_SET_POST_TYPE ){
+            $output = ob_get_clean();
+            ob_start();
+        }
+    }
+
+    public function filterSetRowActions( $actions, $post )
+    {
+        if( isset( $post->post_type ) && $post->post_type === FLRT_FILTERS_SET_POST_TYPE ){
+            $new_actions = [];
+            foreach( $actions as $key => $action ){
+                if( in_array( $key, array( 'edit', 'trash', 'untrash', 'delete', 'flrt_duplicate' ) ) ){
+                    $new_actions[$key] = $action;
+                }
+            }
+            return $new_actions;
+        }
+        return $actions;
+    }
+
+    public function filterSetBulkActionsMessages( $messages, $bulk_counts )
+    {
+        if( ! isset( $messages[ FLRT_FILTERS_SET_POST_TYPE ] ) ){
+            $messages[ FLRT_FILTERS_SET_POST_TYPE ] = array(
+                /* translators: %s: Number of posts. */
+                'updated'   => esc_html( _n( '%s filter set has been updated.', '%s filter sets have been updated.', $bulk_counts['updated'], 'filter-everything' ) ),
+                'locked'    => ( 1 === $bulk_counts['locked'] ) ? esc_html__( '1 The filter set has not been updated. Someone is editing it.', 'filter-everything' ) :
+                    /* translators: %s: Number of posts. */
+                    esc_html( _n( '%s filter set has not been updated. Someone is editing it.', '%s filter sets have not been updated. Someone is editing them.', $bulk_counts['locked'], 'filter-everything' ) ),
+                /* translators: %s: Number of posts. */
+                'deleted'   => esc_html( _n( '%s filter set has been permanently deleted.', '%s filter sets have been permanently deleted.', $bulk_counts['deleted'], 'filter-everything' ) ),
+                /* translators: %s: Number of posts. */
+                'trashed'   => esc_html( _n( '%s filter set has been moved to the Trash.', '%s filter sets have been moved to the Trash.', $bulk_counts['trashed'], 'filter-everything' ) ),
+                /* translators: %s: Number of posts. */
+                'untrashed' => esc_html( _n( '%s filter set has been restored from the Trash.', '%s filter sets have been restored from the Trash.', $bulk_counts['untrashed'], 'filter-everything' ) ),
+            );
+        }
+        return $messages;
+    }
+
+    public function filterSetActionsMessages( $messages )
+    {
+        if( ! isset( $messages[ FLRT_FILTERS_SET_POST_TYPE ] ) ){
+            // No need to escape
+            $messages[ FLRT_FILTERS_SET_POST_TYPE ] = array(
+                0 => '',
+                1 => esc_html__( 'The Filter set has been updated.', 'filter-everything' ),
+                2 => esc_html__( 'The Custom field has been updated.', 'filter-everything' ),
+                3 => esc_html__( 'The Custom field has been deleted.', 'filter-everything' ),
+                4 => esc_html__( 'The Filter set has been updated.', 'filter-everything' ),
+                5 => false,
+                6 => esc_html__( 'The Filter set has been created.', 'filter-everything' ),
+                7 => esc_html__( 'The Filter set has been saved.', 'filter-everything' ),
+                8 => esc_html__( 'The Filter set has been submitted.', 'filter-everything' ),
+                9 => esc_html__( 'The Filter set has been scheduled for', 'filter-everything' ),
+                10 => esc_html__( 'The Filter set draft has been updated.', 'filter-everything' ),
+                // Errors
+                11 => esc_html__('The Filter set has not been updated.', 'filter-everything')
+            );
+        }
+
+        return $messages;
+    }
+
+    /**
+     * @return array
+     */
+    protected function getExistingFilterSlugs()
+    {
+        $existingSlugs = get_option('wpc_filter_permalinks', []);
+        $convertedExistingSlugs = [];
+
+        foreach( $existingSlugs as $entityKey => $slug ){
+            $parts = explode( '#', $entityKey, 2 );
+            $newEntityKey = implode('_', $parts);
+            $convertedExistingSlugs[$newEntityKey] = $slug;
+        }
+
+        if( isset( $convertedExistingSlugs['post_date_post_date'] ) ){
+            $convertedExistingSlugs['post_date'] = $convertedExistingSlugs['post_date_post_date'];
+            unset($convertedExistingSlugs['post_date_post_date']);
+        }
+
+        return $convertedExistingSlugs;
+    }
+
+    /**
+     * @return array
+     */
+    private function getPostTypesTaxList()
+    {
+        $postTypesTaxList = [];
+
+        $taxonomies = EntityManager::getTaxonomies();
+        $postTypes  = array_keys( $this->getPostTypes() );
+
+        foreach ( $postTypes as $postType ){
+            foreach ( $taxonomies as $taxonomy) {
+
+                if( in_array( $postType, $taxonomy->object_type ) ){
+                    $postTypesTaxList[$postType][] = array(
+                        'name'          => 'taxonomy_' . $taxonomy->name,
+                        'hierarchical'  => $taxonomy->hierarchical,
+                        'label'         => ucwords( flrt_ucfirst( mb_strtolower( $taxonomy->label ) ) ),
+                    );
+                }
+            }
+        }
+
+        return $postTypesTaxList;
+    }
+
+    public function includeAdminJs()
+    {
+        $screen = get_current_screen();
+
+        if( isset( $screen->id ) && $screen->id === FLRT_FILTERS_SET_POST_TYPE ){
+            global $post_id;
+
+            // Disable autosavings
+            wp_dequeue_script( 'autosave' );
+
+            $suffix = ( defined( 'SCRIPT_DEBUG' ) && SCRIPT_DEBUG ) ? '' : '.min';
+            $ver    = ( defined( 'SCRIPT_DEBUG' ) && SCRIPT_DEBUG ) ? rand(0, 1000) : FLRT_PLUGIN_VER;
+//            $select2ver = '4.1.0';
+
+            // Filter Set script
+            wp_enqueue_script('wpc-filters-admin-filter-set', FLRT_PLUGIN_DIR_URL . 'assets/js/wpc-filter-set-admin'.$suffix.'.js', array('jquery', 'wp-util', 'jquery-ui-sortable', 'select2', 'wpc-filters-admin'), $ver );
+
+            $l10n = array(
+                'filterSlugs'        => $this->getExistingFilterSlugs(),
+                'postTypesTaxList'   => $this->getPostTypesTaxList(),
+                'swatchesTaxonomies' => flrt_get_experimental_option( 'color_swatches_taxonomies', [] ),
+                'brandEntities'      => flrt_brand_filter_entities(),
+                'ratingTaxonomies'      => array('product_visibility'),
+                'moreOptions'        => esc_html__( 'More options', 'filter-everything' ),
+                'lessOptions'        => esc_html__( 'Less options', 'filter-everything' ),
+                'filtersPro'         => defined( 'FLRT_FILTERS_PRO' ),
+                'wPQuerySelectId'    => $this->generateFieldId('wp_filter_query'),
+                'excludePlaceholder' => esc_html__( 'Select terms and', 'filter-everything' ),
+                'newFilter'          => esc_html__( 'New Filter', 'filter-everything' ),
+                'addFilter'          => esc_html__( 'Please, add filters first', 'filter-everything' ),
+                'selectFilter'       => esc_html__( '— Select Filter —', 'filter-everything' ),
+                'numFieldNoTaxes'    => esc_html__( 'No taxonomies are associated with the selected post type.', 'filter-everything' ),
+                'numFieldAttrs'      => [
+                    'post_meta_num' => [
+                        'label'         => esc_html__(  'Meta Key', 'filter-everything' ),
+                        'description'   => esc_html__( 'Name of the Custom Field', 'filter-everything' ),
+                    ],
+                    'tax_numeric'   => [
+                        'label'         => esc_html__(  'Taxonomy', 'filter-everything' ),
+                        'description'   => esc_html__(  'Taxonomy with numeric values you need to filter by', 'filter-everything' ),
+                        'notice'        => '',
+                    ]
+                ],
+                'defaultCustomMetaKeys' => wpc_default_custom_meta_keys_filter(),
+                'selectMetaKeyPlaceholder'    => esc_html__( 'Type to search for a custom field key', 'filter-everything' ),
+                'metaKeySearchText'    => esc_html__( 'Searching', 'filter-everything' ),
+                'isLimitFilterSet'    => $this->under_limit_filter_set($post_id),
+                'rangeListValueToRemove'   => esc_html__('Remove', 'filter-everything'),
+                'limitForRangeList'        => (int)(defined('FLRT_RANGE_LIST_LIMIT') && FLRT_RANGE_LIST_LIMIT) ? FLRT_RANGE_LIST_LIMIT : 20,
+                'rangeListTexts'           => [
+                    'min_value'   => esc_html__('Min Value', 'filter-everything'),
+                    'max_value'   => esc_html__('Max Value', 'filter-everything'),
+                    'label'       => esc_html__('Label', 'filter-everything'),
+                    'up_to'       => esc_html__('Up to', 'filter-everything'),
+                    'and_up'      => esc_html__('And up', 'filter-everything'),
+                    'error'       => esc_html__('Error: No fields are filled in. Please fill in at least one field.', 'filter-everything'),
+                    'value_error' => esc_html__('Error: The minimum value cannot be greater than or equal to the maximum value.', 'filter-everything'),
+                ],
+            );
+
+            wp_localize_script( 'wpc-filters-admin-filter-set', 'wpcSetVars', $l10n );
+        }
+    }
+
+    public function addCustomLabel( $html, $attributes )
+    {
+        if( isset( $attributes['id'] ) ){
+            if( $attributes['id'] == $this->generateFieldId('post_name') ){
+
+                $spinner        = '<span class="spinner"></span>'."\r\n";
+                $openContainer  = '<div id="wpc-field-location-container"><span class="wpc-full-width">&nbsp;</span><div class="wpc-field-location-wrapper">'."\r\n";
+                $closeContainer = '</div></div>'."\r\n";
+                $link           = '';
+
+                $current_index = isset( $attributes['value'] ) ? $attributes['value'] : '';
+                $options = ! empty( $attributes['options'] ) ? $attributes['options'] : [];
+
+                $data_link = '';
+                $hidden_link_class = ' display-none';
+                if( isset( $options[ $current_index ]['data-link'] ) ){
+                    $data_link = esc_attr( $options[ $current_index ]['data-link'] );
+                    $hidden_link_class = '';
+                }
+                $link = '<div class="wpc-location-preview-hidden"><a class="wpc-location-preview ' . $hidden_link_class . '" href="'.$data_link.'" ';
+                $link .= 'title="'.esc_attr( esc_html__('Preview the selected location in a new tab', 'filter-everything') ).'" ';
+                $link .= 'target="_blank">';
+                $link .= '<span class="dashicons dashicons-visibility"></span></a></div>';
+                $html = $spinner . $openContainer . $html . $link . $closeContainer;
+            }
+
+            if ( $attributes['id'] == $this->generateFieldId('apply_button_post_name') ) {
+
+                $spinner        = '<span class="spinner"></span>'."\r\n";
+                $openContainer  = '<div id="wpc-field-apply-button-location-container"><span class="wpc-full-width">&nbsp;</span>'."\r\n";
+                $closeContainer = '</div>'."\r\n";
+                $link           = '';
+
+                $html = $spinner . $openContainer . $html . $link . $closeContainer;
+            }
+
+            if( $attributes['id'] == $this->generateFieldId('wp_filter_query') ){
+
+                $spinner        = '<span class="spinner"></span>'."\n";
+                $openContainer  = '<div id="wpc-field-wp-query-container">&nbsp;'."\n";
+                $description    = '<p class="description">'.esc_html__( 'Note: if you modify the selected Posts list on the page, please update this Filter Set', 'filter-everything' ).'</p>'."\n";
+                $closeContainer = '<div id="wpc_query_vars"></div></div>'."\n";
+
+                $html = $spinner . $openContainer . $html . $description . $closeContainer;
+            }
+
+            if( $attributes['id'] == $this->generateFieldId('wp_page_type') ){
+                $label          = '<label class="wpc-location-label" for="'.esc_attr($attributes['id']).'">'.esc_html__( 'Apply filtering if the page is:', 'filter-everything' ).'</label>'."\r\n";
+                $html =  $label . $html;
+            }
+
+            if( $attributes['id'] == $this->generateFieldId('apply_button_page_type') ){
+                $label          = '<label class="wpc-location-label" for="'.esc_attr($attributes['id']).'">'.esc_html__( 'Show this Filter Set if the page is:', 'filter-everything' ).'</label>'."\r\n";
+                $html =  $label . $html;
+            }
+        }
+
+        return $html;
+    }
+
+
+    private function getSpecificFields( $type, $exclude_type = '' )
+    {
+        $particular = [];
+
+        foreach( $this->getFieldsMapping() as $key => $field ){
+            if(!empty($exclude_type) && ! empty( $field[$exclude_type])){
+                continue;
+            }
+            if( isset( $field[$type] ) && ! empty( $field[$type] ) ){
+                $particular[ $key ] = $field;
+            }
+        }
+
+        return $particular;
+    }
+
+    public function getPostTypes()
+    {
+        $allowed_types  = [];
+        $post_types     = get_post_types( array( 'public' => true ), 'objects' );
+        $exclude        = apply_filters( 'wpc_filter_post_types', [] );
+
+        foreach ( $post_types as $type ){
+            if( in_array( $type->name, $exclude ) ){
+                continue;
+            }
+            $allowed_types[$type->name] = isset( $type->labels->name ) ? $type->labels->name : $type->labels->singular_name;
+        }
+
+        return $allowed_types;
+
+    }
+
+    public function getFieldsMapping()
+    {
+        return $this->defaultFields;
+    }
+
+    /**
+     * @var $queriedObject object
+     * @return array (empty array if there is no related set id)
+     */
+    public function findRelevantSets( $queriedObject )
+    {
+        // We need to search all relevantSetS
+        $filterSets = [];
+
+        $filterSets = apply_filters( 'wpc_relevant_set_ids', $filterSets, $queriedObject);
+
+        if( ! empty( $filterSets ) ){
+            foreach ( $filterSets as $set ){
+                if( isset( $set['show_on_the_page'] ) && $set['show_on_the_page'] === true ){
+                    $this->addFilterSetsToJsonData($filterSets);
+                    return $filterSets;
+                }
+            }
+        }
+
+        // Get main filter set for post type
+        if( isset( $queriedObject['post_types'] ) && ! isset( $queriedObject['post_id'] ) ){
+            foreach( $queriedObject['post_types'] as $post_type ){
+                $sets = $this->getSetIdForPostType( $post_type );
+                if( $sets !== false ){
+                    $filterSets = array_merge( $filterSets, $sets );
+                }
+            }
+        }
+
+        $filterSets = apply_filters( 'wpc_return_relevant_set_ids', $filterSets, $queriedObject );
+
+        $this->addFilterSetsToJsonData($filterSets);
+
+        return $filterSets;
+    }
+
+    /**
+     * @var $post_type string - post_type post|product|page|...
+     * @return int|false
+     */
+    public function getSetIdForPostType( $post_type )
+    {
+        if( ! $post_type ){
+            return false;
+        }
+
+        $container      = Container::instance();
+        $sets           = [];
+        $pll_lang_id    = false;
+
+        if ( is_array( $post_type ) ) {
+            $post_type = implode( "_", $post_type );
+        }
+
+        $key = 'set_' . $post_type;
+
+        if( ! $sets = $container->getParam( $key ) ){
+            global $wpdb;
+            $is_fitler_set_translatable = false;
+
+            if( flrt_wpml_active() ){
+                $wpml_settings = get_option( 'icl_sitepress_settings' );
+                if( isset( $wpml_settings['custom_posts_sync_option'][FLRT_FILTERS_SET_POST_TYPE] ) ){
+                    if( $wpml_settings['custom_posts_sync_option'][FLRT_FILTERS_SET_POST_TYPE] === '1' ){
+                        $is_fitler_set_translatable = true;
+                    }
+                }
+            }
+
+            $sql[] = "SELECT {$wpdb->posts}.ID,{$wpdb->posts}.post_content,{$wpdb->posts}.post_excerpt,{$wpdb->posts}.post_name";
+            $sql[] = "FROM {$wpdb->posts}";
+
+            if ( flrt_wpml_active() && defined('ICL_LANGUAGE_CODE') && $is_fitler_set_translatable ) {
+                $sql[] = "LEFT JOIN {$wpdb->prefix}icl_translations AS wpml_translations";
+                $sql[] = "ON {$wpdb->posts}.ID = wpml_translations.element_id";
+                $sql[] = "AND wpml_translations.element_type IN(";
+                $sql[] = $wpdb->prepare( "CONCAT('post_', '%s')", FLRT_FILTERS_SET_POST_TYPE );
+                $sql[] = ")";
+            }
+
+            // Check common if Polylang PRO is active and Filter Set is translatable post type
+            if( flrt_pll_pro_active() && defined('FLRT_ALLOW_PLL_TRANSLATIONS') && FLRT_ALLOW_PLL_TRANSLATIONS ){
+                if( function_exists('pll_current_language') && function_exists('pll_the_languages') ) {
+                    $pll_current_language   = pll_current_language();
+                    $pll_languages          = pll_the_languages( array('raw' => 1 ) );
+                    if( $pll_current_language && isset( $pll_languages[ $pll_current_language ]['id'] ) ){
+                        $pll_lang_id = $pll_languages[ $pll_current_language ]['id'];
+
+                        $sql[] = "LEFT JOIN {$wpdb->term_relationships}";
+                        $sql[] = "ON ({$wpdb->posts}.ID = {$wpdb->term_relationships}.object_id)";
+                    }
+                }
+            }
+
+            $sql[] = "WHERE 1=1";
+            $sql[] = "AND ( {$wpdb->posts}.post_name IN ( '1' )";
+
+            if( defined('FLRT_FILTERS_PRO') && FLRT_FILTERS_PRO ){
+                $sql[] = "OR {$wpdb->posts}.ID IN ( ";
+                $sql[] = "SELECT {$wpdb->posts}.ID FROM {$wpdb->posts}";
+                $sql[] = "LEFT JOIN {$wpdb->postmeta} ON ( {$wpdb->posts}.ID = {$wpdb->postmeta}.post_id )";
+                $sql[] = "WHERE 1=1";
+                $sql[] = $wpdb->prepare( "AND  {$wpdb->postmeta}.meta_key = %s", FLRT_APPLY_BUTTON_META_KEY);
+                $sql[] = "AND {$wpdb->postmeta}.meta_value IN ( '1' )";
+                $sql[] = ")";
+            }
+
+            $sql[] = ")";
+            $sql[] = $wpdb->prepare("AND {$wpdb->posts}.post_type = '%s'", FLRT_FILTERS_SET_POST_TYPE );
+            $sql[] = $wpdb->prepare("AND {$wpdb->posts}.post_excerpt = '%s'", $post_type );
+
+            $sql[] = "AND ( ({$wpdb->posts}.post_status = 'publish') )";
+
+            if( flrt_wpml_active() && defined( 'ICL_LANGUAGE_CODE' ) && $is_fitler_set_translatable ){
+                $sql[] = $wpdb->prepare("AND wpml_translations.language_code = '%s'", ICL_LANGUAGE_CODE );
+            }
+
+            if( flrt_pll_pro_active() && defined('FLRT_ALLOW_PLL_TRANSLATIONS') && FLRT_ALLOW_PLL_TRANSLATIONS ){
+                if( $pll_lang_id ){
+                    $sql[] = $wpdb->prepare("AND {$wpdb->term_relationships}.term_taxonomy_id IN (%d)", $pll_lang_id );
+                }
+            }
+
+            $sql[] = "ORDER BY {$wpdb->posts}.menu_order DESC, {$wpdb->posts}.ID ASC";
+
+            if( ! defined('FLRT_FILTERS_PRO') ) {
+                $sql[] = "LIMIT 0, 1";
+            }
+
+            $sql = implode(' ', $sql );
+
+            $setPosts = $wpdb->get_results( $sql, OBJECT );
+
+            if( ! empty( $setPosts ) ){
+                $sets = flrt_is_query_on_page( $setPosts, array( '1' ) );
+            }else{
+                return false;
+            }
+
+            $container->storeParam( $key, $sets );
+
+        }
+
+        return $sets;
+    }
+
+    public function validateSets( $sets )
+    {
+        if( ! is_array( $sets ) || empty( $sets ) ){
+            return false;
+        }
+
+        foreach ( $sets as $i => $set ){
+            if( ! isset( $set['ID'] ) || ! $set['ID'] ){
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public function preSaveSet( $post_id, $data )
+    {
+        $postData = Container::instance()->getThePost();
+        $postData = prepare_wpc_filter_set_json_data($postData);
+
+        if( defined('DOING_AUTOSAVE') && DOING_AUTOSAVE ) {
+            return $post_id;
+        }
+
+        if( wp_is_post_revision( $post_id ) ) {
+            return $post_id;
+        }
+
+        if( $data['post_type'] !== FLRT_FILTERS_SET_POST_TYPE ) {
+            return $post_id;
+        }
+
+        $nonce = filter_input( INPUT_POST, '_flrt_nonce' );
+
+        if( ! $this->verifyNonce( $nonce ) ) {
+            return $post_id;
+        }
+
+        if( ! current_user_can( flrt_plugin_user_caps() ) ) {
+            return $post_id;
+        }
+
+        // Do not fire this function twice, on saving Set Fields action
+        remove_action( 'pre_post_update', [$this, 'preSaveSet'], 10 );
+
+        $set_fields_key  = self::FIELD_NAME_PREFIX;
+
+        if( isset( $postData[$set_fields_key] ) &&  ! empty( $postData[$set_fields_key] ) ){
+            $setFields          = $postData[$set_fields_key];
+            $setFields['ID']    = $post_id;
+            $setFields['title'] = isset( $data['post_title'] ) ? $data['post_title'] : '';
+
+            $setFields = apply_filters( 'wpc_pre_save_set_fields', $setFields );
+
+            $setFields = $this->sanitizeSetFields( $setFields );
+
+            if( ! $this->validateSetFields( $setFields ) ){
+                flrt_redirect_to_error( $post_id, $this->errors );
+            }
+        }
+
+
+        return $post_id;
+    }
+
+    public function saveSet( $post_id, $post )
+    {
+        $postData = Container::instance()->getThePost();
+        $postData = prepare_wpc_filter_set_json_data($postData);
+
+        if( defined('DOING_AUTOSAVE') && DOING_AUTOSAVE ) {
+            return $post_id;
+        }
+
+        if( wp_is_post_revision( $post_id ) ) {
+            return $post_id;
+        }
+
+        if( $post->post_type !== FLRT_FILTERS_SET_POST_TYPE ) {
+            return $post_id;
+        }
+
+        $nonce = filter_input( INPUT_POST, '_flrt_nonce' );
+
+        if( ! $this->verifyNonce( $nonce ) ) {
+            return $post_id;
+        }
+
+        if( ! current_user_can( flrt_plugin_user_caps() ) ) {
+            return $post_id;
+        }
+
+        remove_action( 'save_post', array( $this, 'saveSet' ), 10, 2 );
+
+        $filterFields = $this->getFilterFieldService();
+        $saveFiltersTrigger = true;
+        $allFiltersValid    = true;
+
+        // Save filter fields
+        if( isset( $postData['wpc_filter_fields'] ) && ! empty( $postData['wpc_filter_fields'] ) ) {
+
+            // Validate filters
+            if( ! $filterFields->validateFilters( $postData['wpc_filter_fields'] ) ) {
+                $saveFiltersTrigger = false;
+            }
+
+            if( $saveFiltersTrigger ) {
+                $filtersToSave = [];
+
+                // loop
+                $filterConfiguredFields = $filterFields->getFieldsMapping();
+                foreach ( $postData['wpc_filter_fields'] as $filterId => $filter ) {
+
+                    // Set up checkbox fields if they are empty
+                    $filter = $filterFields->prepareFilterCheckboxFields( $filter, $filterFields->getFieldsByType( 'checkbox', $filterConfiguredFields ) );
+
+                    // set parent
+                    if ( ! $filter['parent'] ) {
+                        $filter['parent'] = $post_id;
+                    }
+
+                    $filter = $filterFields->sanitizeFilterFields( $filter );
+                    $filtersToSave[ $filterId ] = $filter;
+
+                    if ( ! $filterFields->validateTheFilter( $filter, $filterId ) ) {
+                        $allFiltersValid = false;
+                        break;
+                    }
+
+                }
+
+                // Loop to save
+                if( $allFiltersValid ){
+
+                    $update_after_save = [];
+                    $old_new_ids       = [];
+
+                    foreach ( $filtersToSave as $filterId => $filter ){
+                        // save filter
+                        $saved_filter = $filterFields->saveFilter($filter);
+
+                        if( isset( $saved_filter['parent_filter'] ) && isset( $saved_filter['ID'] ) ){
+                            if( strpos( $saved_filter['parent_filter'], 'filter_', 0 ) !== false  ){
+                                $update_after_save[ $saved_filter['ID'] ][] = [
+                                    'key' => 'parent_filter',
+                                    'value' => $saved_filter['parent_filter']
+                                ];
+                            }
+                            $old_new_ids[$filterId] = $saved_filter['ID'];
+                        }
+                    }
+
+                    // Update data after saving Filters and getting IDs of new ones.
+                    if( ! empty( $update_after_save ) ){
+
+                        foreach ( $update_after_save as $filter_post_id => $fields_to_update ){
+                            $filter_post_data = get_post( $filter_post_id );
+                            $filter_data = maybe_unserialize( $filter_post_data->post_content );
+
+                            if( ! $filter_data ){
+                                continue;
+                            }
+
+                            foreach ( $fields_to_update as $field_attr ){
+                                if( $field_attr['key'] === 'parent_filter' ){
+                                    if( isset( $filter_data[ 'parent_filter' ] ) ){
+                                        if( isset( $old_new_ids[ $field_attr['value'] ] ) ){
+                                            $filter_data[ $field_attr['key'] ] = $old_new_ids[ $field_attr['value'] ];
+                                        }
+                                    }
+                                }
+                            }
+
+                            $to_update = array(
+                                'ID'			=> $filter_post_id,
+                                'post_content'	=> maybe_serialize( $filter_data )
+                            );
+
+                            // Unhook wp_targeted_link_rel() filter from WP 5.1 corrupting serialized data.
+                            remove_filter( 'content_save_pre', 'wp_targeted_link_rel' );
+                            add_filter( 'pre_wp_unique_post_slug', 'flrt_force_non_unique_slug', 10, 2 );
+
+                            // Slash data.
+                            // WP expects all data to be slashed and will unslash it (fixes '\' character issues)
+                            $to_update = wp_slash( $to_update );
+
+                            wp_update_post( $to_update );
+
+                            remove_filter( 'pre_wp_unique_post_slug', 'flrt_force_non_unique_slug', 10 );
+                        }
+                    }
+                }
+            }
+        }
+
+        // Save Set fields
+        $set_fields_key  = self::FIELD_NAME_PREFIX;
+
+        if( isset( $postData[$set_fields_key] ) &&  ! empty( $postData[$set_fields_key] ) ){
+            $setFields          = $postData[$set_fields_key];
+            $setFields['ID']    = $post_id;
+            $setFields['title'] = isset( $post->post_title ) ? $post->post_title : '';
+
+            $this->saveSetFields( $setFields );
+        }
+
+        if( ! $saveFiltersTrigger || ! $allFiltersValid ){
+            flrt_redirect_to_error( $post_id, $filterFields->getErrorCodes() );
+        }
+
+        add_action( 'save_post', array( $this, 'saveSet' ), 10, 2 );
+
+        return $post_id;
+    }
+
+
+
+    protected function saveSetFields($setFields ){
+        $post_id = $setFields['ID'];
+
+        $setFields = apply_filters( 'wpc_pre_save_set_fields', $setFields );
+
+        $setFields = $this->sanitizeSetFields( $setFields );
+
+        $setFields = wp_unslash( $setFields );
+
+        // Set up checkbox fields if they are empty
+        $filterFields = $this->getFilterFieldService();
+        /**
+         * @feature It seems we need to move methods 'prepareFilterCheckboxFields' and 'getFieldsByType'
+         * to one level above to parent class
+         */
+        $this->setupDefaultFields();
+        $setFields = $filterFields->prepareFilterCheckboxFields( $setFields, $filterFields->getFieldsByType( 'checkbox', $this->getFieldsMapping()) );
+        $_setFields = $setFields;
+
+        // Remove elements, that shouldn't be serialized
+        flrt_extract_vars( $_setFields, array( 'ID', 'title', 'post_type', 'menu_order', 'post_name', 'wp_filter_query_vars' ) );
+        $menu_order = isset( $setFields['menu_order'] ) ? $setFields['menu_order'] : 0;
+
+        // Create array of data to save.
+        $to_save = array(
+            'ID'			    => $setFields['ID'],
+            'post_status'	    => 'publish',
+            'post_type'		    => FLRT_FILTERS_SET_POST_TYPE,
+            'post_title'	    => $setFields['title'],
+            'post_content'	    => maybe_serialize( $_setFields ),
+            'post_excerpt'      => $setFields['post_type'],
+            'menu_order'        => $menu_order,
+            'post_name'         => $setFields['post_name']
+        );
+
+        // Unhook wp_targeted_link_rel() filter from WP 5.1 corrupting serialized data.
+        remove_filter( 'content_save_pre', 'wp_targeted_link_rel' );
+
+        $to_save = wp_slash( $to_save );
+
+        add_filter( 'pre_wp_unique_post_slug', 'flrt_force_non_unique_slug', 10, 2 );
+
+        // Update or Insert.
+        if( $setFields['ID'] ) {
+            wp_update_post( $to_save );
+        } else	{
+            $setFields['ID'] = wp_insert_post( $to_save );
+        }
+
+        remove_filter( 'pre_wp_unique_post_slug', 'flrt_force_non_unique_slug', 10 );
+        // Update meta_fields
+
+        update_post_meta( $setFields['ID'], 'wpc_filter_set_post_type', $setFields['post_type'] );
+
+        $set_query_vars = NULL;
+        // Save selected wp_query->query_vars
+        if( isset( $setFields['wp_filter_query'] ) ){
+            $filterQueryHash = $setFields['wp_filter_query'];
+            if( isset( $setFields['wp_filter_query_vars'][$filterQueryHash] ) ){
+                $set_query_vars = $setFields['wp_filter_query_vars'][$filterQueryHash];
+            }
+        }
+
+        update_post_meta( $setFields['ID'], 'wpc_filter_set_query_vars', $set_query_vars );
+
+        if( isset( $setFields['apply_button_post_name'] ) ){
+            update_post_meta( $setFields['ID'], FLRT_APPLY_BUTTON_META_KEY, $setFields['apply_button_post_name'] );
+        }
+
+        return $setFields['ID'];
+    }
+
+    private function sanitizeSetFields( $setFields )
+    {
+        if( is_array( $setFields ) ){
+            $sanitizedFields = [];
+
+            foreach ( $setFields as $key => $setField ) {
+                if( is_array( $setField ) ){
+                    $sanitizedValue = $setField;
+                }else{
+                    $sanitizedValue = esc_html( $setField );
+                }
+
+                $sanitizedFields[ $key ] = $sanitizedValue;
+            }
+
+            if( isset( $sanitizedFields['menu_order'] ) ){
+                $sanitizedFields['menu_order'] = flrt_sanitize_int( $sanitizedFields['menu_order'] );
+                $sanitizedFields['menu_order'] = $sanitizedFields['menu_order'] ? $sanitizedFields['menu_order'] : 0;
+            }
+
+            return $sanitizedFields;
+        }
+
+        return $setFields;
+    }
+
+    private function prepareSetParameters( $set_post )
+    {
+        /**
+         * @feature this should be not so complex. I'm ashamed of this.
+         */
+        if( ! isset( $set_post->ID ) ){
+            return false;
+        }
+
+        $this->setupDefaultFields();
+        $defaults = $this->getFieldsMapping();
+
+        $defaults = apply_filters( 'wpc_prepare_filter_set_parameters', $defaults, $set_post );
+
+        $unserialized = maybe_unserialize( $set_post->post_content );
+
+        // For backward compatibility. From v.1.1.24
+        if( isset( $unserialized['wp_page_type'] ) ){
+            $unserialized['wp_page_type'] = str_replace(":", "___", $unserialized['wp_page_type']);
+        }
+
+        if( empty( $unserialized ) ){
+            $unserialized = [];
+        }
+
+        foreach( $this->getSpecificFields( 'particular' ) as $key => $field ){
+            $unserialized[$key] = $set_post->{$field['particular']};
+        }
+
+        $populated  = $this->populateValues( $unserialized, $defaults );
+        $parsed     = $this->parseValues( $populated, $defaults );
+
+        // In case if some settings field was missing
+        $parsed = wp_parse_args( $parsed, $defaults );
+        $parsed = apply_filters( 'wpc_filter_before_make_default_set_values', $parsed );
+
+        // Set default values, if there is no saved
+        foreach( $parsed as $field => $params ){
+
+            if( ! isset( $params['value'] ) && isset( $params['default'] )){
+                $parsed[$field]['value'] = $params['default'];
+            }
+        }
+
+        $parsed['ID'] = $set_post->ID;
+
+        return apply_filters( 'wpc_filter_set_prepared_values', $parsed );
+    }
+
+    private function parseValues( $populated, $defaults )
+    {
+        $parsed = [];
+
+        foreach ( $populated as $field_key => $values_array ){
+            // In case if we have saved field, that is absent in fieldsMapping
+            if( ! isset( $defaults[$field_key] ) ){
+                continue;
+            }
+
+            if( isset( $values_array['value'] ) ){
+                $parsed[$field_key] = wp_parse_args( $values_array, $defaults[$field_key] );
+            }else{
+                $parsed[$field_key] = $this->parseValues( $values_array, $defaults[$field_key] );
+            }
+        }
+
+        return $parsed;
+    }
+
+    private function populateValues( $saved_values )
+    {
+        $transformed = [];
+
+        foreach ( $saved_values as $field_key => $field_value ) {
+            if( is_array( $field_value ) ){
+                $transformed[ $field_key ] = $this->populateValues( $field_value );
+            }else{
+                $transformed[ $field_key ] = array( 'value' => $field_value );
+            }
+        }
+
+        return $transformed;
+    }
+
+    public function getSet( $ID )
+    {
+        $parameters = [];
+
+        if( ! $ID || empty( $ID ) ){
+            return $parameters;
+        }
+
+        $container = Container::instance();
+        $key = 'wpc_set_' . $ID;
+
+        if( ! $set = $container->getParam( $key ) ){
+            $set_post = get_post( $ID );
+            /**
+             * @feature add this post to cache.
+             */
+            $set = $this->prepareSetParameters( $set_post );
+            $container->storeParam( $key, $set );
+        }
+
+        return $set;
+    }
+
+    public function validateSetFields( $setFields ){
+
+        // Validate post_type
+        if( isset( $setFields['post_type'] ) ){
+            $postTypes = array_keys( $this->getPostTypes() );
+            if( ! in_array( $setFields['post_type'], $postTypes, true ) ){
+                $this->errors[] = 21; // Invalid post type
+                return false;
+            }
+        } else {
+            $this->errors[] = 21; // Invalid post type
+            return false;
+        }
+
+        if (!empty($setFields['post_type'])) {
+            if($this->under_limit_filter_set($setFields['ID'], $setFields['post_type'], true)){
+                $this->errors[] = 92;
+                return false;
+            }
+        }
+
+        // We have to validate wp_page_type before locations field
+        // because the last one expects valid wp_page_type
+        if( isset( $setFields['wp_page_type'] ) ){
+            $possibleWpPageType = apply_filters( 'wpc_validation_wp_page_type_entities', array('common___common') );
+
+            if( ! in_array( $setFields['wp_page_type'], $possibleWpPageType ) ){
+                $this->errors[] = 211; // Invalid WP Page Type
+                return false;
+            }
+        }else{
+            $this->errors[] = 211; // Invalid WP Page Type
+            return false;
+        }
+
+        // Validate post_name aka location
+        // We can not forbid to save "No WP Queries..." option
+        // Because All archive pages for selected post type may not contain relevant query.
+        if( isset( $setFields['post_name'] ) ){
+            $flatEntities   = apply_filters( 'wpc_validation_location_entities', array('1'), $setFields );
+
+            if( ! in_array( $setFields['post_name'], $flatEntities ) ){
+                $this->errors[] = 22; // Invalid location
+                return false;
+            }
+
+        } else {
+            $this->errors[] = 22; // Invalid location
+            return false;
+        }
+
+        //Validate wp_filter_query
+        if( isset( $setFields['wp_filter_query'] ) ){
+            if(! preg_match('/^[a-f0-9]{32}$/', $setFields['wp_filter_query'] ) && $setFields['wp_filter_query'] !== '-1'){
+                $this->errors[] = 221; // Invalid WP Filter Query
+                return false;
+            }
+        }else{
+            $this->errors[] = 221; // Invalid WP Filter Query
+            return false;
+        }
+
+        // Validate hide_empty
+        if( isset( $setFields['hide_empty'] ) ){
+            if( ! in_array( $setFields['hide_empty'], array( 'yes', 'no', 'initial' ), true ) ){
+                $this->errors[] = 23; // Invalid empty field
+                return false;
+            }
+        }
+
+        // Validate show_count
+        if( isset( $setFields['show_count'] ) ){
+            if( ! in_array( $setFields['show_count'], array( 'yes', 'no' ), true ) ){
+                $this->errors[] = 24; // Invalid show count
+                return false;
+            }
+        }
+
+        if( isset( $setFields['horizontal_view'] ) ){
+            if( ! in_array( $setFields['horizontal_view'], array( 'yes', 'no' ), true ) ){
+                $this->errors[] = 25; // Invalid horizontal view
+                return false;
+            }
+        }
+
+        if( isset( $setFields['wp_filter_query_vars'] ) ){
+            if( ! empty( $setFields['wp_filter_query_vars'] ) ){
+
+                foreach ( $setFields['wp_filter_query_vars'] as $query_vars_serialized ){
+                    if( ! is_serialized( $query_vars_serialized ) ){
+                        $this->errors[] = 20; // Common Error
+                        return false;
+                    }
+                }
+            }
+        }
+
+        if( isset( $setFields['use_apply_button'] ) ){
+            if( ! in_array( $setFields['use_apply_button'], array( 'yes', 'no' ), true ) ){
+                $this->errors[] = 242; // Invalid show count
+                return false;
+            }
+        }
+
+        return $setFields;
+    }
+
+    protected function getFilterFieldService()
+    {
+        return Container::instance()->getFilterFieldsService();
+    }
+
+    public function getPostTypeField( $post_id )
+    {
+        // getSet() returns [] for an empty ID (e.g. a Filters block/widget with
+        // no Filter Set chosen) — report "no post type" instead of a warning.
+        $set = $this->getSet( $post_id );
+        $field['post_type'] = ! empty( $set['post_type'] ) ? $set['post_type'] : NULL;
+        return $field;
+    }
+
+    public function getSettingsTypeFields( $post_id )
+    {
+        $set = $this->getSet( $post_id );
+        $settings_fields_map = $this->getSpecificFields('settings', 'location');
+
+        return flrt_extract_vars($set, array_keys( $settings_fields_map ) );
+    }
+
+    public function getSettingsLocationTypeFields( $post_id )
+    {
+        $set = $this->getSet( $post_id );
+        $settings_fields_map = $this->getSpecificFields('location');
+
+        return flrt_extract_vars($set, array_keys( $settings_fields_map ) );
+    }
+
+    public function generateFieldName( $field_name, $sub_name = '', $index = 0 ){
+        $attr = self::FIELD_NAME_PREFIX . '['.$field_name.']';
+        if( $sub_name ){
+            $attr .= '['.$index.']['.$sub_name.']';
+        }
+        return $attr;
+    }
+
+    public function generateFieldId( $field_name, $sub_name = '', $index = 0 ){
+        $attr = self::FIELD_NAME_PREFIX . '-' . $field_name;
+        if( $sub_name ){
+            $attr .= '-' . $sub_name . '-' . $index;
+        }
+        return $attr;
+    }
+
+    public static function createNonce()
+    {
+        return wp_create_nonce( self::NONCE_ACTION );
+    }
+
+    protected function verifyNonce($nonce )
+    {
+        return wp_verify_nonce( $nonce, self::NONCE_ACTION );
+    }
+
+    public function addDuplicateLink(array $actions, \WP_Post $post): array
+    {
+        if ($post->post_type !== FLRT_FILTERS_SET_POST_TYPE || !current_user_can('edit_posts')) {
+            return $actions;
+        }
+
+        $is_pro = defined('FLRT_FILTERS_PRO') && FLRT_FILTERS_PRO;
+        $new_actions = [];
+
+        foreach ($actions as $key => $action) {
+            $new_actions[$key] = $action;
+
+            if ($key === 'edit') {
+                $new_actions['flrt_duplicate'] = $this->generateDuplicateLinkHtml($post->ID, $is_pro);
+            }
+        }
+
+        return $new_actions;
+    }
+
+    private function generateDuplicateLinkHtml(int $post_id, bool $is_pro): string
+    {
+        $label = esc_html__('Duplicate', 'filter-everything');
+        $icon  = '<span class="flrt-duplicate-filter-set">+</span> ';
+
+        if ($is_pro) {
+            $url = wp_nonce_url(
+                admin_url('admin.php?action=flrt_duplicate_filter_set&post=' . $post_id),
+                'flrt_duplicate_filter_set'
+            );
+            return sprintf('<a href="%s">%s%s</a>', esc_url($url), $icon, $label);
+        }
+
+        $pro_label = ' (' . esc_html__('PRO', 'filter-everything') . ')';
+        return sprintf(
+            '<a href="%s" class="wpc-vailable-in-pro-link">%s%s%s</a>',
+            esc_url(flrt_vailable_in_pro_attr_link()),
+            $icon,
+            $label,
+            $pro_label
+        );
+    }
+
+
+    public function display_auto_filter_set_create_links($which)
+    {
+        if ($which !== 'top') {
+            return;
+        }
+
+        $screen = function_exists('get_current_screen') ? get_current_screen() : null;
+        if (!$screen || $screen->base !== 'edit' || $screen->post_type !== FLRT_FILTERS_SET_POST_TYPE) {
+            return;
+        }
+
+        $posts = get_posts([
+            'post_type'     => FLRT_FILTERS_SET_POST_TYPE,
+            'post_status'   => array('publish', 'pending', 'draft', 'future', 'private', 'trash'),
+            'numberposts'   => 1,
+            'fields'        => 'ids',
+            'no_found_rows' => true,
+        ]);
+
+        if (current_user_can('manage_options')) {
+            $has_filter_set = true;
+            if (empty($posts)) {
+                $has_filter_set = false;
+            }
+            flrt_include_admin_view('auto-create-filter', ['nonce_action' => self::NONCE_ACTION, 'has_filter_set' => $has_filter_set]);
+        }
+    }
+
+    public function handle_create_auto_filter_set()
+    {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html__('You do not have sufficient permissions to perform this action.', 'filter-everything'));
+        }
+
+        if (!isset($_GET['_flrt_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['_flrt_nonce'])), self::NONCE_ACTION)) {
+            wp_die(esc_html__('The request could not be verified. Please try again.', 'filter-everything'));
+        }
+        $redirect_url = admin_url( 'edit.php?post_type=filter-set');
+        $autoFilterSet = new \FilterEverything\Filter\AutoFilterSet($redirect_url);
+    }
+
+    public function adminErrorNotice()
+    {
+        if(false !== ($result = get_transient('wpc_auto_filters_error'))){
+            flrt_view_admin_error($result);
+            delete_transient('wpc_auto_filters_error');
+        }
+    }
+
+    public function removePermalinksFromSettings($post_id){
+        $post = get_post($post_id);
+        if ( ! $post || $post->post_type !== FLRT_FILTERS_SET_POST_TYPE ) {
+            return;
+        }
+
+        $existingSlugs = get_option('wpc_filter_permalinks', []);
+        if ( ! is_array($existingSlugs) ) {
+            $existingSlugs = [];
+        }
+
+        $child_posts = $this->getAllFilterSetPosts($post_id);
+
+        if(!empty($child_posts)){
+            foreach ($child_posts as $child_post_obj) {
+                $entityKey = $this->buildEntityKeyFromPostContent($child_post_obj->post_content);
+                if ($entityKey !== null && isset($existingSlugs[$entityKey])) {
+                    unset($existingSlugs[$entityKey]);
+                }
+            }
+        }
+
+        $other_filter_posts = $this->getAllFilterPosts($post_id);
+        if (!empty($other_filter_posts)){
+            foreach ($other_filter_posts as $filter_post_obj) {
+                $entityKey = $this->buildEntityKeyFromPostContent($filter_post_obj->post_content);
+                if ($entityKey !== null) {
+                    $existingSlugs[$entityKey] = $filter_post_obj->post_name;
+                }
+            }
+        }
+
+        update_option('wpc_filter_permalinks', $existingSlugs, true);
+    }
+
+    private function getAllFilterSetPosts($post_id)
+    {
+        return get_posts([
+            'post_type'      => FLRT_FILTERS_POST_TYPE,
+            'posts_per_page' => -1,
+            'post_status'    => 'any',
+            'post_parent'    => $post_id
+        ]);
+    }
+
+    private function getAllFilterPosts($post_id)
+    {
+        $posts = get_posts([
+            'post_type'      => FLRT_FILTERS_POST_TYPE,
+            'posts_per_page' => -1,
+            'post_status'    => 'publish',
+            'post_parent__not_in' => [ $post_id ]
+        ]);
+
+        $published_posts = [];
+
+        foreach ($posts as $post){
+            $parent_post = get_post($post->post_parent);
+            if($parent_post->post_status === 'publish'){
+                $published_posts[] = $post;
+            }
+        }
+
+        return $published_posts;
+    }
+
+    public function changeTrashSlug($new_status, $old_status, $post){
+        if ( $post->post_type !== FLRT_FILTERS_SET_POST_TYPE ) {
+            return;
+        }
+        if ( $this->changingTrashSlug ) {
+            return;
+        }
+        if ($old_status === 'trash' && $new_status === 'draft') {
+            $existingSlugs = get_option('wpc_filter_permalinks', []);
+            if ( ! is_array($existingSlugs) ) {
+                $existingSlugs = [];
+            }
+
+            $child_posts = $this->getAllFilterSetPosts($post->ID);
+            foreach ($child_posts as $child_post_obj) {
+                $entityKey = $this->buildEntityKeyFromPostContent($child_post_obj->post_content);
+                if ($entityKey === null) {
+                    continue;
+                }
+                if ( empty($existingSlugs[$entityKey]) ) {
+                    continue;
+                }
+
+                $desired_slug = $existingSlugs[$entityKey];
+                if ( $desired_slug === $child_post_obj->post_name ) {
+                    continue;
+                }
+                if ( wp_is_post_revision($child_post_obj->ID) ) {
+                    continue;
+                }
+
+                $update = array(
+                    'ID'        => $child_post_obj->ID,
+                    'post_name' => $desired_slug,
+                );
+
+                $this->changingTrashSlug = true;
+                try {
+                    $result = wp_update_post($update, true);
+                } finally {
+                    $this->changingTrashSlug = false;
+                }
+
+                if ( is_wp_error($result) || 0 === $result ) {
+                    continue;
+                }
+            }
+        }
+    }
+
+    private function buildEntityKeyFromPostContent($rawPostContent)
+    {
+        $content = $this->safelyUnserializePostContent($rawPostContent);
+        if (empty($content)) {
+            return null;
+        }
+        if (empty($content['entity']) || empty($content['e_name'])) {
+            return null;
+        }
+        return $content['entity'] . '#' . $content['e_name'];
+    }
+
+    private function safelyUnserializePostContent($raw)
+    {
+        $content = maybe_unserialize($raw);
+        return is_array($content) ? $content : [];
+    }
+
+    /**
+     * Returns the effective free-version Filter Set limit for a given post type.
+     *
+     * The historical free limit was {@see self::FREE_LIMIT_LEGACY} (3) Filter Sets per post type.
+     * From {@see self::FREE_LIMIT_CUTOFF_DATE} onwards the new free limit is {@see self::FREE_LIMIT_NEW} (2).
+     * To avoid breaking existing free-version installs that already relied on the old limit, any post type
+     * that had at least one published Filter Set created before the cutoff is grandfathered at the legacy
+     * limit; only post types whose Filter Sets are all post-cutoff (or have none yet) get the new lower limit.
+     *
+     * @param string $post_type Target post type (stored in wp_posts.post_excerpt for Filter Sets).
+     * @return int Effective max number of published Filter Sets allowed for this post type.
+     */
+    public function getFreeLimitForPostType($post_type) : int
+    {
+        if (empty($post_type)) {
+            return self::FREE_LIMIT_NEW;
+        }
+
+        global $wpdb;
+
+        $legacy_count = (int) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT COUNT(ID)
+                FROM {$wpdb->posts}
+                WHERE post_type = %s
+                AND post_excerpt = %s
+                AND post_status = %s
+                AND post_date < %s",
+                FLRT_FILTERS_SET_POST_TYPE,
+                $post_type,
+                'publish',
+                self::FREE_LIMIT_CUTOFF_DATE
+            )
+        );
+
+        return $legacy_count > 0 ? self::FREE_LIMIT_LEGACY : self::FREE_LIMIT_NEW;
+    }
+
+    /**
+     * Checks whether the free-version limit of published Filter Sets per post type has been reached.
+     *
+     * In the PRO version (FLRT_FILTERS_PRO is defined and true) the limit does not apply and the method
+     * always returns false. In the free version the effective limit comes from {@see self::getFreeLimitForPostType()}
+     * — {@see self::FREE_LIMIT_LEGACY} (3) for post types grandfathered by Filter Sets created before
+     * {@see self::FREE_LIMIT_CUTOFF_DATE}, and {@see self::FREE_LIMIT_NEW} (2) otherwise. The method then:
+     *  - resolves the post type from $post_id (or $default_post_type if provided),
+     *  - returns true (over the limit) when there are already enough Filter Sets for that post type and
+     *    the current $post_id is not among the first allowed ones, when switching an existing set to a
+     *    post type that already has enough sets, or when no Filter Set context exists yet and the
+     *    post type already has enough sets,
+     *  - returns false otherwise, i.e. the user is still under the limit and may proceed.
+     *
+     * @param int|string $post_id           ID of the Filter Set being edited, or empty when creating a new one.
+     * @param string     $default_post_type Post type explicitly chosen in the UI; overrides the value stored on the set.
+     * @param bool       $update            Reserved flag for update flows (currently unused inside the method).
+     * @return bool True when the free-version limit is reached and the action must be blocked, false otherwise.
+     */
+    public function under_limit_filter_set($post_id = '', $default_post_type = '', $update = false) : bool
+    {
+
+        if( defined('FLRT_FILTERS_PRO') && FLRT_FILTERS_PRO ){
+            return false;
+        }
+
+        if (empty($post_id) && empty($default_post_type)) {
+            return true;
+        }
+
+        global $wpdb;
+
+        $get_post_type = [];
+
+        if(!empty($post_id)){
+            $get_post_type = $this->getPostTypeField($post_id);
+        }
+
+
+        if(empty($default_post_type) && !empty($get_post_type)){
+            $post_type = (!empty($get_post_type['post_type']['value']) ? $get_post_type['post_type']['value'] : 'post');
+        }else{
+            $post_type = $default_post_type;
+        }
+
+        if (!empty($post_type)) {
+            $limit = $this->getFreeLimitForPostType($post_type);
+
+            $count = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(ID)
+                    FROM {$wpdb->posts}
+                    WHERE post_type = %s
+                    AND post_excerpt = %s
+                    AND post_status = %s",
+                    FLRT_FILTERS_SET_POST_TYPE,
+                    $post_type,
+                    'publish',
+                )
+            );
+
+            $post_ids = $wpdb->get_col(
+                $wpdb->prepare(
+                    "SELECT ID
+                            FROM {$wpdb->posts}
+                            WHERE post_type = %s
+                            AND post_excerpt = %s
+                            AND post_status = %s
+                            ORDER BY ID ASC
+                            LIMIT %d",
+                    FLRT_FILTERS_SET_POST_TYPE,
+                    $post_type,
+                    'publish',
+                    $limit
+                )
+            );
+
+            if (!empty($post_id)) {
+                if ($count >= $limit && !in_array($post_id, $post_ids)) {
+                    return true;
+                }
+            }
+
+            if(!empty($default_post_type) && !empty($get_post_type['post_type']['value'])){
+                if($default_post_type === $get_post_type['post_type']['value']){
+                    return false;
+                }
+            }
+
+            if(!empty($default_post_type) && !empty($get_post_type['post_type']['value'])){
+                if($default_post_type !== $get_post_type['post_type']['value']){
+                    if($count >= $limit){
+                        return true;
+                    }
+                }
+            }
+
+            if(empty($get_post_type['post_type']['value']) && $count >= $limit){
+                return true;
+            }
+
+        }
+
+        return false;
+    }
+
+    public function getErrors() {
+        return $this->errors;
+    }
+
+    private function addFilterSetsToJsonData($filterSets)
+    {
+        $flrt_json_data = &Container::instance()->getFilterContext()->jsonData();
+        foreach ($filterSets as $set) {
+            $setId = $set['ID'];
+            $setSettings = $this->getSet($setId);
+
+            if(!isset($flrt_json_data[$setId])){
+                $flrt_json_data[$setId] = [];
+            }
+
+            $flrt_json_data[$setId]['settings'] = array_map(
+                fn($item) => is_array($item) ? $item['value'] : $item,
+                $setSettings
+            );
+        }
+    }
+}

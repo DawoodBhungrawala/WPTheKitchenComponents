@@ -1,0 +1,132 @@
+*** eBay Product Importer Extension Changelog ***
+
+2026-09-06 - version 5.4.0
+* Update: Product variation gallery compatibility with WooCommerce 11 is added.
+
+2026-06-18 - version 5.3.0
+* Update: Fully compatible with Wordpress 7.0 and WooCommerce 10.8.1
+
+2026-03-18 - version 5.2.0
+* Update: Compatible with WordPress 6.9.4 and WooCommerce 10.6.1.
+* Update: Function improved.
+* Update: Some methods name are changed like generate_sku with generate_unique_id, change_sku change with change_unique_id.
+
+2025-11-22 - version 5.1.1
+* Update: eBay Parser upgraded.
+
+2025-10-22 - version 5.0.0
+* Add: API service added as fallback.
+* Update: Prasers have been moved under the vendor directory.
+
+2025-09-19 - version 4.0.0
+* Update: Function improved as per the new WooCommerce standards.
+
+2025-04-25 - version 3.3.0
+* Add: "Sync now" product row action added for instant product synchronization.
+* Add: Enable default variation selected.
+* Update: The price formula evaluator library has been upgraded to leverage Symfony Expression Language, introducing support for functions such as ceil, floor, round, min, max, pow, abs, and log. Furthermore, it now supports if conditional statements, enabling the creation of complex price formulas.
+
+2024-11-27 - version 3.2.0
+* Update: eBay Parser upgraded.
+
+2024-10-15 - version 3.1.0
+* Update: Some functions have been improved.
+* Fix: Product synchronization (automatic update) issue has been fixed.
+* Fix: WooCommerce High-Performance Order Storage (HPOS) issue has been fixed.
+
+2024-08-27 - version 3.0.1
+* Update: Chrome extension opitons updated.
+
+2024-08-26 - version 3.0.0
+* Add: Price formula option added in configuration.
+* Add: Max image import option added in configuration.
+* Add: Background processing feature added.
+* Add: Synchronization (Cron) for Price, Stock and Status feature added.
+* Add: Display PHP incompatibility in configuration.
+* Add: A new isSynchronizable method has been added to the Abstract and Ebay parsers and used in the front importer class as a parallelism with the advanced version.
+* Update: Plugin configuration page link has been moved under the WooCommerce menu.
+* Update: Plugin configuration page link renamed to eBay Importer.
+* Update: Used custom function to get product ID by SKU to fix duplicate SKU issue from trashed products.
+* Update: Complete plugin system changed.
+* Update: eBay Parser upgraded.
+* Update: Price formula evaluator library changed which supports functions like ceil, floor, round etc.
+
+2024-05-21 - version 2.6.0
+* Update: Ebay Parser upgraded.
+* Add: Ebay regular price import feature added.
+* Add: WooCommerce brands compatibility added.
+
+2024-02-05 - version 2.5.1
+* Add: Image resize feature added.
+* Add: SSL certificate for Curl requests.
+
+2024-01-20 - version 2.4.0
+* Add: Price formula evaluator library added.
+
+2023-10-20 - version 2.3.0
+* Add: WooCommerce High-Performance Order Storage (HPOS) compatibility added.
+
+2023-10-18 - version 2.2.1
+* Update: Upgrade Ebay parser.
+
+2023-08-11 - version 2.2.0
+* Update: Upgrade Ebay parser.
+
+2023-06-19 - version 2.1.0
+* Update: Importer system improved.
+* Update: Upgrade Ebay parser.
+* Update: Chrome Extension Advanced options updated.
+
+2023-05-28 - version 2.0.0
+* Add: Image in customer review feature added.
+* Add: Added a new Origin column to the admin product list to find product source later.
+* Add: Variation update feature added.
+* Update: Importer system improved.
+* Update: Upgrade Ebay parser.
+* Fix: Variation import issue fixed.
+* Remove: The log feature has been removed as it was not as useful as it was needed to be.
+
+2023-03-10 - version 1.4.6
+* Fixed SKU extraction issue for some specific products.
+
+2023-03-03 - version 1.4.5
+* Minor bug fixed
+
+2023-03-03 - version 1.4.4
+* Upgrade parser
+
+2022-10-28 - version 1.4.3
+* Upgrade parser
+
+2022-09-17 - version 1.4.1
+* Upgrade Importer
+* Upgrade parser
+
+2022-01-29 - version 1.4.0
+* Parser upgraded
+* Price with formula option added	
+	
+2021-11-16 - version 1.3.0
+	Parser upgraded
+
+2021-08-19 - version 1.2.0
+* Import url pattern has been changed
+* SKU pattern has been changed, SKU will be imported same as source website.
+* SKU input box added in Chrome extension form
+* Option added to confirm if the product already exist that will be upated or not.
+* Review limit input box added in Chrome extension form.
+* Textarea field added to set find and replace text from the imported data.
+* Import the description images and change the eBay image url with destination website url.
+
+2021-03-08 - version 1.1.0
+* [ADD] Import customer reviews
+* [ADD] Affiliate feature
+
+2021-01-09 - version 1.0.2
+* [ADD] eBay product features
+
+2020-10-13 - version 1.0.1
+* Minor bug fixed
+
+2020-08-17 - version 1.0.0
+* Initial release

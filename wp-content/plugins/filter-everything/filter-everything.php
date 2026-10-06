@@ -1,0 +1,272 @@
+<?php
+/*
+Plugin Name: Filter Everything&nbsp;— WordPress & WooCommerce Filters
+Plugin URI: https://filtereverything.pro
+Description: Instantly filter any WordPress content & WooCommerce products by attributes, taxonomies, custom fields + AJAX, Elementor, automatic filter creation.
+Version: 1.9.7
+Requires at least: 6.0
+Requires PHP: 7.4
+Author: Andrii Stepasiuk
+Author URI: https://filtereverything.pro/about/
+Text Domain: filter-everything
+Domain Path: /lang
+*/
+
+// If this file is called directly, abort.
+if ( ! defined('ABSPATH') ) {
+    exit;
+}
+
+if( ! class_exists( 'FlrtFilter' ) ):
+
+    class FlrtFilter{
+
+        public function init()
+        {
+            $this->define( 'FLRT_PLUGIN_DIR_PATH', plugin_dir_path( __FILE__ ) );
+            $this->define( 'FLRT_PLUGIN_DIR_URL', plugin_dir_url( __FILE__ ) );
+            $this->define( 'FLRT_PLUGIN_BASENAME', plugin_basename(__FILE__) );
+            $this->define( 'FLRT_PLUGIN_SLUG', 'filter-everything-pro' );
+            $this->define( 'FLRT_PLUGIN_VER', '1.9.7' );
+            $this->define( 'FLRT_PLUGIN_URL', 'https://filtereverything.pro' );
+            $this->define( 'FLRT_PLUGIN_TESTED_TO', '7.1' );
+            $this->define( 'FLRT_PLUGIN_DEBUG', false );
+            $this->define( 'FLRT_TEMPLATES_DIR_NAME', 'filters' );
+
+            $this->define( 'FLRT_FILTERS_SET_POST_TYPE', 'filter-set' );
+            $this->define( 'FLRT_FILTERS_POST_TYPE', 'filter-field' );
+            $this->define( 'FLRT_PREFIX_SEPARATOR', '-' );
+            $this->define( 'FLRT_QUERY_TERMS_SEPARATOR', ';' );
+            $this->define( 'FLRT_DATE_TIME_SEPARATOR', 't' );
+            $this->define( 'FLRT_FOLDING_COOKIE_NAME', 'wpcContainersStatus' );
+            $this->define( 'FLRT_MORELESS_COOKIE_NAME', 'wpcMoreLessStatus' );
+            $this->define( 'FLRT_HIERARCHY_LIST_COOKIE_NAME', 'wpcHierarchyListStatus' );
+            $this->define( 'FLRT_OPEN_CLOSE_BUTTON_COOKIE_NAME', 'wpcWidgetStatus' );
+            $this->define( 'FLRT_APPLY_BUTTON_META_KEY', 'wpc_filter_set_apply_button_post_name' );
+            $this->define( 'FLRT_TRANSIENT_PERIOD_HOURS', 12 );
+            $this->define( 'FLRT_BEAVER_BUILDER_VAR', 'fl_builder' );
+            $this->define( 'FLRT_LICENSE_KEY', 'wpc_filter_license' );
+            $this->define( 'FLRT_MARKET', 'codecanyon' );
+            $this->define( 'FLRT_RELEASER', 'stepasiuk' );
+            $this->define( 'FLRT_APPROVED', 'victor' );
+            $this->define( 'FLRT_ITERATION', 'first' );
+            $this->define( 'FLRT_PRO_PRICE', '$69' );
+
+            if ( ! defined('FLRT_RANGE_LIST_LIMIT')){
+                $this->define( 'FLRT_RANGE_LIST_LIMIT', 20 );
+            }
+
+
+            if ( ! defined('FLRT_XML_PATH')){
+                $wp_upload_dir = wp_upload_dir();
+                $upload_dir_basepath = $wp_upload_dir['basedir'];
+
+                $path = $upload_dir_basepath . '/filter-everything/xml/';
+                define( 'FLRT_XML_PATH', $path );
+            }
+
+            require_once FLRT_PLUGIN_DIR_PATH . 'src/wpc-helpers.php';
+
+            // Thematic helper files split out of wpc-helpers.php (same functions, no renames)
+            flrt_include('src/helpers/dates.php');
+            flrt_include('src/helpers/colors.php');
+            flrt_include('src/helpers/cache-keys.php');
+            flrt_include('src/helpers/ui.php');
+            flrt_include('src/helpers/migrations.php');
+            flrt_include('src/helpers/instant-recount.php');
+
+            // Class autoloading (src/classmap.php + PSR-4 fallback for new sub-namespaced code).
+            // Only side-effect-free class files are autoloaded; see bin/build-classmap.php.
+            require_once FLRT_PLUGIN_DIR_PATH . 'src/Autoloader.php';
+            \FilterEverything\Filter\Autoloader::register();
+            \FilterEverything\Filter\Autoloader::addClassMap( require FLRT_PLUGIN_DIR_PATH . 'src/classmap.php', FLRT_PLUGIN_DIR_PATH . 'src' );
+            \FilterEverything\Filter\Autoloader::addNamespace( 'FilterEverything\\Filter', FLRT_PLUGIN_DIR_PATH . 'src' );
+
+            // Files that do work at include time (functions, hooks, instantiation) — kept explicit, in order.
+            flrt_include('src/wpc-compat.php');
+            flrt_include('src/wpc-utility-functions.php');
+            flrt_include('src/wpc-default-hooks.php');
+            flrt_include('src/wpc-third-party.php');
+            flrt_include('src/PostTypes.php');
+
+            // PRO bootstrap. Comment out this single line (or ship without the pro/ folder)
+            // to run the plugin as the free version: it is the only place that registers
+            // PRO classes, constants and hooks.
+//            flrt_include('pro/filters-pro.php');
+
+            flrt_include('src/RobotsTxt.php');
+            flrt_include('src/Swatches.php');
+            flrt_include('src/Admin/AdminHooks.php');
+            flrt_include('src/Admin/AdminNotices.php');
+            flrt_include('src/Admin/WhatsNew.php');
+            flrt_include('src/Admin/ReviewRequest.php');
+            flrt_include('src/Admin/MetaBoxes.php');
+            flrt_include('src/Frontend/Widgets.php');
+            flrt_include('src/wpc-api.php');
+            flrt_include('src/Frontend/Builders/gutenberg/gutenberg.php');
+
+            $this->registerHooks();
+
+            $this->initSettings();
+
+            flrt_check_update_mobile_settings();
+
+            if( flrt_get_experimental_option( 'disable_woo_orderby' ) === 'on' ) {
+                if( ! function_exists('woocommerce_catalog_ordering') ){
+                    function woocommerce_catalog_ordering()
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        public function registerHooks()
+        {
+            // Backward compatibility. From v1.3.2
+            add_action( 'init', [ $this, 'convertShowChipsInContent' ], -1 );
+
+            add_action( 'init', [ $this, 'oneTwoThreeGo' ] );
+
+            add_action( 'init', [ $this, 'loadTextdomain' ], 0 );
+
+            add_action( 'after_setup_theme', [$this, 'afterSetupTheme'] );
+
+            register_activation_hook(__FILE__, ['FilterEverything\Filter\Plugin', 'activate']);
+
+            register_deactivation_hook(__FILE__, ['FilterEverything\Filter\Plugin', 'deactivate']);
+
+            register_uninstall_hook(__FILE__, ['FilterEverything\Filter\Plugin', 'uninstall']);
+
+            add_action('after_switch_theme', ['FilterEverything\Filter\Plugin', 'switchTheme'] );
+        }
+
+        public function convertShowChipsInContent()
+        {
+            // Backward compatibility. From v1.3.2
+            $filter_settings = get_option('wpc_filter_settings');
+
+            if ( isset( $filter_settings['show_terms_in_content'] ) && $filter_settings['show_terms_in_content'] === 'on' ) {
+                $new_chips_hooks = [];
+                $theme_dependencies = flrt_get_theme_dependencies();
+
+                if ( flrt_is_woocommerce() ) {
+                    $new_chips_hooks[] = 'woocommerce_no_products_found';
+                    $new_chips_hooks[] = 'woocommerce_archive_description';
+                }
+
+                if ( isset( $theme_dependencies['chips_hook'] ) && is_array($theme_dependencies['chips_hook'] ) ) {
+                    foreach ( $theme_dependencies['chips_hook'] as $compat_chips_hook ) {
+                        $new_chips_hooks[] = $compat_chips_hook;
+                    }
+                }
+
+                $filter_settings['show_terms_in_content'] = $new_chips_hooks;
+                update_option('wpc_filter_settings', $filter_settings );
+            }
+        }
+
+        public function loadTextdomain()
+        {
+            add_filter( 'load_textdomain_mofile', [ $this, 'preferBundledMofile' ], 10, 2 );
+            load_plugin_textdomain( 'filter-everything', false, dirname(FLRT_PLUGIN_BASENAME) . '/lang' );
+        }
+
+        /**
+         * Prefer translations bundled in the plugin's /lang folder over those
+         * auto-downloaded by WordPress.org into /wp-content/languages/plugins/.
+         * Our bundled translations are 100% complete and curated; the .org ones
+         * are community-contributed and often partial or lower quality.
+         */
+        public function preferBundledMofile( $mofile, $domain )
+        {
+            if ( $domain !== 'filter-everything' ) {
+                return $mofile;
+            }
+
+            if ( strpos( $mofile, WP_LANG_DIR . '/plugins/' ) === false ) {
+                return $mofile;
+            }
+
+            $locale = function_exists( 'determine_locale' ) ? determine_locale() : get_locale();
+            $bundled = FLRT_PLUGIN_DIR_PATH . 'lang/filter-everything-' . $locale . '.mo';
+
+            if ( is_readable( $bundled ) ) {
+                return $bundled;
+            }
+
+            return $mofile;
+        }
+
+        public function oneTwoThreeGo()
+        {
+            global $flrt_plugin;
+            $flrt_plugin = new \FilterEverything\Filter\Plugin();
+        }
+
+        /**
+         * @since 1.6.1
+         */
+        public function afterSetupTheme()
+        {
+            $this->define( 'FLRT_ALLOW_PLL_TRANSLATIONS', true );
+        }
+
+        private function initSettings(){
+            $container = \FilterEverything\Filter\Container::instance();
+
+            $settings['php_to_js_date_formats'] = array(
+                'Y' => 'yy',
+                'y' => 'y',
+                'm' => 'mm',
+                'n' => 'm',
+                'F' => 'MM',
+                'M' => 'M',
+                'l' => 'DD',
+                'D' => 'D',
+                'd' => 'dd',
+                'j' => 'd',
+                'S' => '',
+            );
+
+            $settings['php_to_js_time_formats'] = array(
+                'a' => 'tt',
+                'A' => 'TT',
+                'h' => 'hh',
+                'g' => 'h',
+                'H' => 'HH',
+                'G' => 'H',
+                'i' => 'mm',
+                's' => 'ss',
+            );
+
+            foreach ( $settings as $key => $value ) {
+                $container->storeParam( $key, $value );
+            }
+        }
+
+        public function define( $name, $value = true )
+        {
+            if( ! defined( $name ) ) {
+                define( $name, $value );
+            }
+        }
+
+    }
+
+    function flrt_filter()
+    {
+        global $wpcFilter;
+
+        if( ! isset( $wpcFilter ) ) {
+            $wpcFilter = new FlrtFilter();
+            $wpcFilter->init();
+        }
+
+        return $wpcFilter;
+
+    }
+
+    flrt_filter();
+
+endif;

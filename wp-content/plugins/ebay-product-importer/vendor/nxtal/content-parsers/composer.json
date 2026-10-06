@@ -1,0 +1,21 @@
+{
+    "name": "nxtal/content-parsers",
+    "description": "Universal content parsers for multiple websites",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Nxtal",
+            "email": "info@nxtal.com"
+        }
+    ],
+    "require": {
+        "php": ">=7.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "Nxtal\\ContentParser\\": "src/"
+        }
+    },
+    "minimum-stability": "stable"
+}
